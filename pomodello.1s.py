@@ -177,19 +177,19 @@ else:
 
             save_state(state)
 
-        if status == "work":
-            s = " \033[32m"
-            s += format_time(remaining)
-            s += "\033[0m"
-        elif status == "break":
-            s = " \033[34m"
+        if status == "work" or status == "break":
+            s = " \033[1;30m"
             s += format_time(remaining)
             s += "\033[0m"
 
         # current task name
         if status == "work":
             s += " - "
-            s += state["tasks"].get(current_id, "")
+            msg = state["tasks"].get(current_id, "")
+            if len(msg) > 19:
+                msg = msg[:20] + "…"
+            msg = msg.ljust(20)
+            s += msg
 
     s += "| trim=false image=" + PANDA
 
