@@ -1,5 +1,11 @@
 #!/usr/local/bin/python3
 
+# <bitbar.title>Pandoro</bitbar.title>
+# <bitbar.version>v1.0</bitbar.version>
+# <bitbar.author>Niklas Gustavsson</bitbar.author>
+# <bitbar.author.github>protocol7</bitbar.author.github>
+# <bitbar.desc>The love child of Trello and Pomodoro</bitbar.desc>
+
 import json
 import requests
 import sys
