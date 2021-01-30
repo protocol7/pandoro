@@ -6,8 +6,8 @@ import sys
 import tempfile
 import os.path
 import time
-
 from contextlib import contextmanager
+from subprocess import Popen, PIPE
 
 @contextmanager
 def atomic_write(filepath, binary=False, fsync=False):
@@ -42,6 +42,7 @@ BREAK_TIME = 5 * 60
 me = sys.argv[0]
 state_file = "/tmp/pomodello"
 
+
 def load_config():
     with(open(os.path.expanduser("~/.pomodellorc"))) as f:
         j = json.load(f)
@@ -61,7 +62,6 @@ def load_state():
 
 
 def save_state(state):
-
     with atomic_write(state_file) as f:
         json.dump(state, f)
 
@@ -78,6 +78,24 @@ def move_task(card_id, list_id):
     r = requests.put(f"https://api.trello.com/1/cards/{card_id}?key={key}&token={token}", data=data)
 
     r.raise_for_status()
+
+
+def new_task():
+    scpt = b"""set theString to text returned of (display dialog "New task" default answer "" buttons {"OK","Cancel"} default button 1)"""
+
+    p = Popen(['osascript'], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    stdout, stderr = p.communicate(scpt)
+    name = stdout.strip().decode("utf-8")
+
+    if name:
+        data = {
+            "name": name,
+            "pos": "top",
+            "idList": list_id,
+        }
+        r = requests.post(f"https://api.trello.com/1/cards?key={key}&token={token}", data=data)
+
+        r.raise_for_status()
 
 
 def refresh_state(state):
@@ -135,31 +153,29 @@ if len(sys.argv) > 1:
         state["current"] = next_id
 
         state = refresh_state(state)
-    elif cmd == "work":
-        paused = state.get("paused", None)
-        if paused:
-            state["time"] = epoch() - paused
-            del state["paused"]
-        elif state.get("status") != "work":
+    elif cmd == "work" or cmd == "break":
+        if state.get("status") != cmd:
             state["time"] = epoch()
 
-        state["status"] = "work"
+        state["status"] = cmd
     elif cmd == "pause":
         del state["status"]
         del state["time"]
     elif cmd == "refresh":
         state = refresh_state(state)
-        save_state(state)
+    elif cmd == "create":
+        new_task()
+
+        state = refresh_state(state)
 
     save_state(state)
 else:
     remaining = tick(state)
+    status = state.get("status", None)
 
     if remaining is None:
         s = ""
     else:
-        status = state.get("status", None)
-
         if remaining <= 0:
             reset = False
             if status == "work":
@@ -208,6 +224,11 @@ else:
         if tid != current_id:
             print("-- %s |bash=\"%s\" param1=switch param2=%s terminal=false length=50" % (name, me, tid))
 
-    print("Work |bash=\"%s\" param1=work terminal=false" % me)
-    print("Pause |bash=\"%s\" param1=pause terminal=false" % me)
+    print("New task... |bash=\"%s\" param1=create terminal=false" % me)
+    if status != "work":
+        print("Work |bash=\"%s\" param1=work terminal=false" % me)
+    if status != "break":
+        print("Break |bash=\"%s\" param1=break terminal=false" % me)
+    if status:
+        print("Pause |bash=\"%s\" param1=pause terminal=false" % me)
     print("Refresh |bash=\"%s\" param1=refresh terminal=false" % me)
