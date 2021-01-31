@@ -75,7 +75,7 @@ class Trello:
 
 
 def load_config():
-    with(open(os.path.expanduser("~/.pomodellorc"))) as f:
+    with(open(os.path.expanduser("~/.pandororc"))) as f:
         j = json.load(f)
 
         return j["key"], j["token"], j["todo-list"], j["done-list"]
