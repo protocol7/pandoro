@@ -213,7 +213,7 @@ def tick(state):
             save_state(state)
 
         if status == "work" or status == "break":
-            s = " \033[1;30m"
+            s = " \033[32m" if status == "work" else " \033[34m"
             s += format_time(remaining)
             s += "\033[0m"
 
