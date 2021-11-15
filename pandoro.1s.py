@@ -246,10 +246,10 @@ def tick(state):
             for tid, name in state["tasks"].items():
                 if tid != current_id:
                     print("-- %s |bash=\"%s\" param1=done param2=%s param3=%s terminal=false length=50" % (name, ME, current_id, tid))
-            print("Wait and continue...")
-            for tid, name in state["tasks"].items():
-                if tid != current_id:
-                    print("-- %s |bash=\"%s\" param1=wait param2=%s param3=%s terminal=false length=50" % (name, ME, current_id, tid))
+            #print("Wait and continue...")
+            #for tid, name in state["tasks"].items():
+            #    if tid != current_id:
+            #        print("-- %s |bash=\"%s\" param1=wait param2=%s param3=%s terminal=false length=50" % (name, ME, current_id, tid))
 
 
         print("Switch...")
@@ -262,6 +262,7 @@ def tick(state):
         print("Get to work |bash=\"%s\" param1=work terminal=false" % ME)
     if status != "break":
         print("Take a break |bash=\"%s\" param1=break terminal=false" % ME)
+    print("---")
     if status:
         print("Pause |bash=\"%s\" param1=pause terminal=false" % ME)
     print("Refresh |bash=\"%s\" param1=refresh terminal=false" % ME)
