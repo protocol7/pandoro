@@ -167,7 +167,7 @@ def new_task(state):
     if name:
         trello.new_task(name)
 
-    notify("New task added")
+        notify("New task added")
 
     return refresh_state(state)
 
