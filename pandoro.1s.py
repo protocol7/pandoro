@@ -9,7 +9,6 @@
 import json
 import requests
 import sys
-import tempfile
 import os.path
 import time
 from contextlib import contextmanager
@@ -50,8 +49,8 @@ class Trello:
         self.done_list_id = done_list_id
 
 
-    def fetch_tasks(self):
-        r = requests.get(f"https://api.trello.com/1/lists/{self.todo_list_id}/cards?key={self.key}&token={self.token}")
+    def fetch_tasks(self, list_id):
+        r = requests.get(f"https://api.trello.com/1/lists/{list_id}/cards?key={self.key}&token={self.token}")
 
         r.raise_for_status()
 
@@ -121,7 +120,8 @@ def refresh_state(state):
     if "time" in state:
         ns["time"] = state["time"]
 
-    ns["tasks"] = trello.fetch_tasks()
+    ns["tasks"] = trello.fetch_tasks(trello.todo_list_id)
+    ns["waiting"] = trello.fetch_tasks(trello.waiting_list_id)
 
     return ns
 
@@ -162,12 +162,17 @@ def notify(msg):
 # commands
 
 def new_task(state):
-    name = osascript(b"""set theString to text returned of (display dialog "New task" default answer "" buttons {"OK","Cancel"} default button 1)""")
+    task = osascript(b"""set theString to text returned of (display dialog "New task" default answer "" buttons {"OK","Cancel"} default button 1)""")
 
-    if name:
-        trello.new_task(name)
+    new_state = do_new_task(state, task)
 
-        notify("New task added")
+    notify("New task added")
+
+    return new_state
+
+def do_new_task(state, task):
+    if task:
+        trello.new_task(task)
 
     return refresh_state(state)
 
@@ -195,6 +200,28 @@ def pause(state):
     del state["status"]
     del state["time"]
 
+def current_task(state):
+    print(state.get("current", ""))
+
+def alfred_list(state):
+    # list tasks, excluding current, and outputs in Alfred JSON format
+    # https://www.alfredapp.com/help/workflows/inputs/script-filter/json/
+    current_id = state.get("current", None)
+
+    items = []
+    for tid, name in state["tasks"].items():
+        if tid == current_id:
+            continue
+        
+        items.append({
+            "title": name,
+            "arg": tid,
+		    "icon": {
+                "path": "/Users/ngn/src/pandoro/panda.png"
+            }
+        })
+
+    print(json.dumps({"items": items}))
 
 # tick
 def tick(state):
@@ -207,7 +234,6 @@ def tick(state):
         s = ""
     else:
         if remaining <= 0:
-            reset = False
             if status == "work":
                 state["status"] = "break"
                 state["time"] = epoch()
@@ -230,7 +256,7 @@ def tick(state):
         # current task name
         if status == "work":
             s += " - "
-            msg = state["tasks"].get(current_id, "")
+            msg = state["tasks"].get(current_id, state["waiting"].get(current_id, ""))
             if len(msg) > 19:
                 msg = msg[:20] + "…"
             msg = msg.ljust(20)
@@ -246,18 +272,39 @@ def tick(state):
             for tid, name in state["tasks"].items():
                 if tid != current_id:
                     print("-- %s |bash=\"%s\" param1=done param2=%s param3=%s terminal=false length=50" % (name, ME, current_id, tid))
-            #print("Wait and continue...")
-            #for tid, name in state["tasks"].items():
-            #    if tid != current_id:
-            #        print("-- %s |bash=\"%s\" param1=wait param2=%s param3=%s terminal=false length=50" % (name, ME, current_id, tid))
 
+            if state["waiting"]:
+                print("-- ---")
+
+            for tid, name in state["waiting"].items():
+                if tid != current_id:
+                    print("-- %s |bash=\"%s\" param1=done param2=%s param3=%s terminal=false length=50" % (name, ME, current_id, tid))
+            
+            print("Wait and continue...")
+            for tid, name in state["tasks"].items():
+                if tid != current_id:
+                    print("-- %s |bash=\"%s\" param1=wait param2=%s param3=%s terminal=false length=50" % (name, ME, current_id, tid))
+
+            if state["waiting"]:
+                print("-- ---")
+
+            for tid, name in state["waiting"].items():
+                if tid != current_id:
+                    print("-- %s |bash=\"%s\" param1=done param2=%s param3=%s terminal=false length=50" % (name, ME, current_id, tid))
 
         print("Switch...")
         for tid, name in state["tasks"].items():
             if tid != current_id:
                 print("-- %s |bash=\"%s\" param1=switch param2=%s terminal=false length=50" % (name, ME, tid))
+        
+        if state["waiting"]:
+            print("-- ---")
 
-    print("New task... |bash=\"%s\" param1=create terminal=false" % ME)
+        for tid, name in state["waiting"].items():
+            if tid != current_id:
+                print("-- %s |bash=\"%s\" param1=done param2=%s param3=%s terminal=false length=50" % (name, ME, current_id, tid))
+
+    print("New task... |bash=\"%s\" param1=create terminal=false | key=CmdOrCtrl+n" % ME)
     if status != "work":
         print("Get to work |bash=\"%s\" param1=work terminal=false" % ME)
     if status != "break":
@@ -282,10 +329,15 @@ if __name__ == "__main__":
         if cmd == "switch":
             switch_task(state, sys.argv[2])
         elif cmd == "done" or cmd == "wait":
-            tid = sys.argv[2]
-            next_id = sys.argv[3]
+            if len(sys.argv) > 3:
+                tid = sys.argv[2]
+                next_id = sys.argv[3]
+            else:
+                tid = state.get("current", None)
+                next_id = sys.argv[2]
 
-            state = complete_task(state, tid, next_id, cmd)
+            if tid:
+                state = complete_task(state, tid, next_id, cmd)
         elif cmd == "work" or cmd == "break":
             start_session(state, cmd)
         elif cmd == "pause":
@@ -293,7 +345,14 @@ if __name__ == "__main__":
         elif cmd == "refresh":
             state = refresh_state(state)
         elif cmd == "create":
-            state = new_task(state)
+            if len(sys.argv) > 2:
+                state = do_new_task(state, sys.argv[2])
+            else:
+                state = new_task(state)
+        elif cmd == "alfred-list":
+            alfred_list(state)
+        elif cmd == "current":
+            current_task(state)
 
         save_state(state)
     else:
