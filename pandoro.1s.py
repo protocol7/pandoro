@@ -249,7 +249,7 @@ def tick(state):
             save_state(state)
 
         if status == "work" or status == "break":
-            s = " \033[32m" if status == "work" else " \033[34m"
+            s = " \033[32m" if status == "work" else " \033[33m"
             s += format_time(remaining)
             s += "\033[0m"
 
@@ -304,7 +304,7 @@ def tick(state):
             if tid != current_id:
                 print("-- %s |bash=\"%s\" param1=done param2=%s param3=%s terminal=false length=50" % (name, ME, current_id, tid))
 
-    print("New task... |bash=\"%s\" param1=create terminal=false | key=CmdOrCtrl+n" % ME)
+    print("New task... |bash=\"%s\" param1=create terminal=false" % ME)
     if status != "work":
         print("Get to work |bash=\"%s\" param1=work terminal=false" % ME)
     if status != "break":
