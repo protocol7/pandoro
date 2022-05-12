@@ -156,7 +156,7 @@ def osascript(script):
 
 
 def notify(msg):
-    osascript(b"display notification \"" + msg.encode("UTF-8") + b"\" with title \"Pandoro\"")
+    osascript(b"display notification \"" + msg.encode("UTF-8") + b"\" with title \"Pandoro\" sound name \"default\"")
 
 
 # commands
