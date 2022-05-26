@@ -7,7 +7,6 @@
 # <bitbar.desc>The love child of Trello and Pomodoro</bitbar.desc>
 
 import json
-import requests
 import sys
 import os.path
 import time
@@ -41,56 +40,135 @@ def atomic_write(filepath, binary=False, fsync=False):
 
 
 class Trello:
-    def __init__(self, key, token, todo_list_id, waiting_list_id, done_list_id):
+    @staticmethod
+    def load_from_config(config):
+        KEY, TOKEN, TODO_LIST_ID, DONE_LIST_ID = config["key"], config["token"], config["todo-list"], config["done-list"]
+
+        return Trello(KEY, TOKEN, TODO_LIST_ID, DONE_LIST_ID)
+
+
+    def __init__(self, key, token, todo_list_id, done_list_id):
         self.key = key
         self.token = token
         self.todo_list_id = todo_list_id
-        self.waiting_list_id = waiting_list_id
         self.done_list_id = done_list_id
 
 
-    def fetch_tasks(self, list_id):
-        r = requests.get(f"https://api.trello.com/1/lists/{list_id}/cards?key={self.key}&token={self.token}")
+    def fetch_tasks(self):
+        import requests
+        r = requests.get(f"https://api.trello.com/1/lists/{self.todo_list_id}/cards?key={self.key}&token={self.token}")
 
         r.raise_for_status()
 
         return {c["id"]: c["name"] for c in r.json()}
 
 
-    def move_task(self, card_id, to_list="done"):
+    def complete_task(self, card_id):
         data = {"pos": "top"}
-        if to_list == "done":
-            data["idList"] = self.done_list_id
-        else:
-            data["idList"] = self.waiting_list_id
+        data["idList"] = self.done_list_id
+        import requests
         r = requests.put(f"https://api.trello.com/1/cards/{card_id}?key={self.key}&token={self.token}", data=data)
 
         r.raise_for_status()
 
-    def new_task(self, name):
+    def new_task(self, name, due_date):
+        # TODO implement due_date
         data = {
             "name": name,
             "pos": "top",
             "idList": self.todo_list_id,
         }
+        import requests
         r = requests.post(f"https://api.trello.com/1/cards?key={self.key}&token={self.token}", data=data)
 
         r.raise_for_status()
 
 
-def load_config():
-    with(open(os.path.expanduser("~/.pandororc"))) as f:
-        j = json.load(f)
+class Google:
+    # Set up:
+    # Get OAuth credentials: https://developers.google.com/workspace/guides/create-credentials#oauth-client-id
+    #   Application type = desktop
+    # Download json file and rename it to credentials.json
+    # Stick in "~/.config/pandoro directory and run this script to authenticate. You should now get a token.json file
+    # Delete credentials.json
 
-        return j["key"], j["token"], j["todo-list"], j["waiting-list"], j["done-list"]
+    @staticmethod
+    def load_from_config(config):
+        list_id = config["list-id"]
+
+        return Google(list_id)
+
+
+    def __init__(self, list_id):
+        self.list_id = list_id
+
+        creds = self.get_creds()
+        from googleapiclient.discovery import build
+        self.service = build('tasks', 'v1', credentials=creds)
+
+
+    def get_creds(self):
+        import os.path
+        from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
+        from google_auth_oauthlib.flow import InstalledAppFlow
+
+        SCOPES = ['https://www.googleapis.com/auth/tasks']
+        creds = None
+        # The file token.json stores the user's access and refresh tokens, and is
+        # created automatically when the authorization flow completes for the first
+        # time.
+        token_file = os.path.expanduser("~/.config/pandoro/token.json")
+        if os.path.exists(token_file):
+            creds = Credentials.from_authorized_user_file(token_file, SCOPES)
+
+        # If there are no (valid) credentials available, let the user log in.
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                cred_file = os.path.expanduser("~/.config/pandoro/credentials.json")
+                flow = InstalledAppFlow.from_client_secrets_file(cred_file, SCOPES)
+                creds = flow.run_local_server(port=0)
+            # Save the credentials for the next run
+            with open("token.json", 'w') as token:
+                token.write(creds.to_json())
+
+        return creds
+
+
+    def fetch_tasks(self):
+        tasks = self.service.tasks().list(tasklist=self.list_id, maxResults=100).execute().get("items", [])
+        tasks = sorted(tasks, key=lambda t: t["position"])
+
+        return {c["id"]: c["title"] for c in tasks}
+
+
+    def complete_task(self, card_id):
+        self.service.tasks().patch(tasklist=self.list_id, task=card_id, body={"status": "completed"}).execute()
+
+        self.service.tasks().clear(tasklist=self.list_id).execute()
+
+
+    def new_task(self, name, due_date):
+        if due_date:
+            due_date = due_date.isoformat() + "T00:00:00.000Z"
+
+        self.service.tasks().insert(tasklist=self.list_id, body={"title": name, "due": due_date}).execute()
 
 
 PANDA = "iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7EAAAOxAGVKw4bAAAFXElEQVRIx8VVX0xTZxT/Hbi7N7VWEcpgaEuRP5Ua0GZTYJkYIwkwnsT6oHMLhj34IDFT1y5xmZmJ6WZilggvxpngGqKJITxtOBmJIc00WGACYVSIVDtJa+kfOrraa3vPXqShA5csy7Lfy/1O7jnn+77z+53vAP8xCABEUaTS0tJPcnJyPiai9fF4/Me5ubnPIpFIsKKiQqyurq7V6XTVGo3mTQBYWlp67vV6J8bHx++53W5548aNeVu3bv1KpVI1MvPS4uLit7Ozs9/IsswEAFVVVec3bdr0eV5eHgmCgGAwyFlZWSMHDhz4uba29qPCwsKcDRs2QJIkAOBEIkHRaJR9Pt/i8PDwd729ve8qivJOXl4ekskkB4NBikQi58fHx8/RunXr3jCbzaGioiJ1YWEhACA3NxdNTU0wm80QRfFvSyDLMsbGxnD79m2EQiEAgM/nw/z8/NLDhw/zBEEQNES0XqVSMRGRwWDAwYMHWa/XEwAwMxMRLSdctpe/kiShpqaGi4qKqLe3F3Nzc6xSqYiINIIgaIRoNBpKpVKPgsFgudFohMViwZYtW/4xmXq9HhaLBQ6HA48fP0YqlXoUiURCyz/3tbS0LLlcLuXfwuVyKS0tLUvFxcX7Mk7gcDj6ZFlmZmZFURR+hZXrlfbrfGRZVnp6evoykjc0NJS73e4UM/PU1BRbrVbFYrGwzWZjr9f72g28Xi/bbDa2WCyK1WrlqakpVhRFcbvdqebm5jIAEABg7969R/V6PQ0PD/PZs2fx8uVLAOBAIACPx4Pu7m5+JdE00YlEAmfOnGGfzwcACAQCPDo6igsXLqC6uprq6+s/7O/vPycAQF1dXbOiKLDb7ZRMJkFEfOLECQKArq4udjqd1NDQkKEip9PJfr+fOjo6QETc2dlJyWQSdrude3p6qKamphnAOaG0tFTIz8/fMTg4iHA4zABQXl6O1tZWBoCrV6/C4/EwM2fcwOPxQJIkbm1tBQD09/fzzMwMwuEwBgcHubi4eIfRaBQErVa7Wa1Wi5OTk2m9+/1+9vl8NDExgRcvXrAkSelWWKF/TiQSNDAwgKqqKvb7/UREYGaenJwkk8kkarXazYIkSRpBEBCPx9MnjEajOHLkSNrevn37Kt2bTCYAgN1uBzNjRS8iHo9DEASIoqgRksmkrCgKdDrdmg1UUlKCnTt34u7du5iZmcFyCevr62EwGODxeFbF6HQ6KIqCVCqVEMLh8G+xWCzV2NiYdevWLZZlOV0KlUoFq9UKZuahoSHcuHEDAHD48GHes2cPrFYrnzp1CvF4HMskiaKIxsZGjkajSjgcfkYAMDAwMLZ79+4dY2NjdO3aNQQCAd62bRu1tbXBYDDw8rN++fJlEBF3dHSQoigMgJ4+fYru7m6enp6m/Px8tLe3s9lsJpfL9cv+/fvNAgAMDQ3dLCsr22E0GnHx4sWM6wYCAdy5cwc+nw/3798HMyMajcJgMKCpqQkFBQWw2WwZMaFQCE6n82Z64JhMpg2dnZ3ukpKSgrV4SKVS+PT0adSqRGQT4d4fCXx96RKys7PX5M3j8fhPnjxpnJiYiKapb29vbzh27Nj3Wq1WBJAuy/I6/sSDt0aHATA/f7uGRL1hlQ8ALCwsyA6Ho+XKlSs/YYUDAOD48ePvHzp0qEer1W7MyspaFfwXO2MDRVFoYWEh0tfX90FXV9cPGTN5Jerq6ja3tbV9WVFRcVStVouSJGVofCWYGYlEArFYTJ6dne25fv36F06n89mqob8WzGZz7q5du1oqKyvfMxgMlWq1uoiINK8S/x6LxeafPHny6/T0tPPBgwffj4yMhPB/4E817SlIfvERtAAAAABJRU5ErkJggg=="
 WORK_TIME = 25 * 60
 BREAK_TIME = 5 * 60
 
-KEY, TOKEN, TODO_LIST_ID, WAITING_LIST_ID, DONE_LIST_ID = load_config()
-trello = Trello(KEY, TOKEN, TODO_LIST_ID, WAITING_LIST_ID, DONE_LIST_ID)
+with(open(os.path.expanduser("~/.pandororc"))) as f:
+    config = json.load(f)
+
+tm_type = config.get("type", "trello")
+if tm_type == "trello":
+    task_manager = Trello.load_from_config(config)
+if tm_type == "google":
+    task_manager = Google.load_from_config(config)
 
 ME = sys.argv[0]
 STATE_FILE = "/tmp/pandoro"
@@ -120,8 +198,7 @@ def refresh_state(state):
     if "time" in state:
         ns["time"] = state["time"]
 
-    ns["tasks"] = trello.fetch_tasks(trello.todo_list_id)
-    ns["waiting"] = trello.fetch_tasks(trello.waiting_list_id)
+    ns["tasks"] = task_manager.fetch_tasks()
 
     return ns
 
@@ -160,7 +237,6 @@ def notify(msg):
 
 
 # commands
-
 def new_task(state):
     task = osascript(b"""set theString to text returned of (display dialog "New task" default answer "" buttons {"OK","Cancel"} default button 1)""")
 
@@ -172,13 +248,26 @@ def new_task(state):
 
 def do_new_task(state, task):
     if task:
-        trello.new_task(task)
+        # detect due date
+        import re
+        import datetime
+
+        due_date = None
+        m = re.search(r" \d{4}-\d{2}-\d{2}$", task)
+        if m:
+            due_date = datetime.date.fromisoformat(m.group()[1:])
+            task = task[0:m.start()]
+        elif task.endswith(" tomorrow"):
+            due_date = datetime.date.today() + datetime.timedelta(days=1)
+            task = task[0:-9]
+
+        task_manager.new_task(task, due_date)
 
     return refresh_state(state)
 
 
-def complete_task(state, tid, next_id, to_list):
-    trello.move_task(tid, to_list)
+def complete_task(state, tid, next_id):
+    task_manager.complete_task(tid)
 
     state["current"] = next_id
 
@@ -212,7 +301,7 @@ def alfred_list(state):
     for tid, name in state["tasks"].items():
         if tid == current_id:
             continue
-        
+
         items.append({
             "title": name,
             "arg": tid,
@@ -256,7 +345,7 @@ def tick(state):
         # current task name
         if status == "work":
             s += " - "
-            msg = state["tasks"].get(current_id, state["waiting"].get(current_id, ""))
+            msg = state["tasks"].get(current_id, "")
             if len(msg) > 19:
                 msg = msg[:20] + "…"
             msg = msg.ljust(20)
@@ -273,36 +362,10 @@ def tick(state):
                 if tid != current_id:
                     print("-- %s |bash=\"%s\" param1=done param2=%s param3=%s terminal=false length=50" % (name, ME, current_id, tid))
 
-            if state["waiting"]:
-                print("-- ---")
-
-            for tid, name in state["waiting"].items():
-                if tid != current_id:
-                    print("-- %s |bash=\"%s\" param1=done param2=%s param3=%s terminal=false length=50" % (name, ME, current_id, tid))
-            
-            print("Wait and continue...")
-            for tid, name in state["tasks"].items():
-                if tid != current_id:
-                    print("-- %s |bash=\"%s\" param1=wait param2=%s param3=%s terminal=false length=50" % (name, ME, current_id, tid))
-
-            if state["waiting"]:
-                print("-- ---")
-
-            for tid, name in state["waiting"].items():
-                if tid != current_id:
-                    print("-- %s |bash=\"%s\" param1=done param2=%s param3=%s terminal=false length=50" % (name, ME, current_id, tid))
-
         print("Switch...")
         for tid, name in state["tasks"].items():
             if tid != current_id:
                 print("-- %s |bash=\"%s\" param1=switch param2=%s terminal=false length=50" % (name, ME, tid))
-        
-        if state["waiting"]:
-            print("-- ---")
-
-        for tid, name in state["waiting"].items():
-            if tid != current_id:
-                print("-- %s |bash=\"%s\" param1=done param2=%s param3=%s terminal=false length=50" % (name, ME, current_id, tid))
 
     print("New task... |bash=\"%s\" param1=create terminal=false" % ME)
     if status != "work":
@@ -328,7 +391,7 @@ if __name__ == "__main__":
 
         if cmd == "switch":
             switch_task(state, sys.argv[2])
-        elif cmd == "done" or cmd == "wait":
+        elif cmd == "done":
             if len(sys.argv) > 3:
                 tid = sys.argv[2]
                 next_id = sys.argv[3]
@@ -337,7 +400,7 @@ if __name__ == "__main__":
                 next_id = sys.argv[2]
 
             if tid:
-                state = complete_task(state, tid, next_id, cmd)
+                state = complete_task(state, tid, next_id)
         elif cmd == "work" or cmd == "break":
             start_session(state, cmd)
         elif cmd == "pause":
