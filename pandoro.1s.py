@@ -263,14 +263,23 @@ def do_new_task(state, task):
         import re
         import datetime
 
+        WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
         due_date = None
-        m = re.search(r" \d{4}-\d{2}-\d{2}$", task)
+        m = re.search(r"^\d{4}-\d{2}-\d{2} ", task)
         if m:
-            due_date = datetime.date.fromisoformat(m.group()[1:])
-            task = task[0:m.start()]
-        elif task.endswith(" tomorrow"):
+            due_date = datetime.date.fromisoformat(m.group()[0:-1])
+            task = task[m.end():]
+        elif task.startswith("tomorrow "):
             due_date = datetime.date.today() + datetime.timedelta(days=1)
-            task = task[0:-9]
+            task = task[9:]
+        elif task.split()[0].lower() in WEEKDAYS:
+            due_day = task.split()[0].lower()
+
+            today = datetime.date.today()
+            due_date = today + datetime.timedelta((WEEKDAYS.index(due_day) - today.weekday()) % 7)
+
+            task = task[len(due_day) + 1:]
 
         task_manager.new_task(task, due_date)
 
