@@ -101,10 +101,15 @@ class Google:
 
     def __init__(self, list_id):
         self.list_id = list_id
+        self.service = None
 
-        creds = self.get_creds()
-        from googleapiclient.discovery import build
-        self.service = build('tasks', 'v1', credentials=creds)
+    def connect(self):
+        if not self.service:
+            creds = self.get_creds()
+            from googleapiclient.discovery import build
+            self.service = build('tasks', 'v1', credentials=creds)
+
+        return self.service
 
 
     def get_creds(self):
@@ -138,6 +143,8 @@ class Google:
 
 
     def fetch_tasks(self):
+        self.connect()
+
         tasks = self.service.tasks().list(tasklist=self.list_id, maxResults=100).execute().get("items", [])
         tasks = sorted(tasks, key=lambda t: t["position"])
 
@@ -145,12 +152,16 @@ class Google:
 
 
     def complete_task(self, card_id):
+        self.connect()
+
         self.service.tasks().patch(tasklist=self.list_id, task=card_id, body={"status": "completed"}).execute()
 
         self.service.tasks().clear(tasklist=self.list_id).execute()
 
 
     def new_task(self, name, due_date):
+        self.connect()
+
         if due_date:
             due_date = due_date.isoformat() + "T00:00:00.000Z"
 
